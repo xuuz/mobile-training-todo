@@ -27,6 +27,7 @@ import com.couchbase.lite.replicator.Replication;
 import com.couchbase.lite.util.ZipUtils;
 import com.facebook.stetho.Stetho;
 import com.robotpajamas.stetho.couchbase.CouchbaseInspectorModulesProvider;
+import com.sjl.foreground.Foreground;
 
 import java.io.IOException;
 import java.net.MalformedURLException;
@@ -43,9 +44,9 @@ public class Application extends android.app.Application {
     public static final String TAG = "Todo";
     public static final String LOGIN_FLOW_ENABLED = "login_flow_enabled";
 
-    private Boolean mLoginFlowEnabled = false;
+    private Boolean mLoginFlowEnabled = true;
     private Boolean mEncryptionEnabled = false;
-    private Boolean mSyncEnabled = false;
+    private Boolean mSyncEnabled = true;
     private String mSyncGatewayUrl = "http://10.0.2.2:4984/todo/";
     private Boolean mLoggingEnabled = false;
     private Boolean mUsePrebuiltDb = false;
@@ -59,9 +60,25 @@ public class Application extends android.app.Application {
     private Database database;
     private Replication pusher;
     private Replication puller;
+    private ReplicationChangeListener changeListener = new ReplicationChangeListener(this);
     private ArrayList<Document> accessDocuments = new ArrayList<Document>();
 
     private String mUsername;
+    private String mPassword;
+
+    private Foreground.Binding listenerBinding;
+
+    private Foreground.Listener mListener = new Foreground.Listener() {
+        public void onBecameForeground() {
+            stopReplication();
+            startReplication();
+        }
+
+        public void onBecameBackground() {
+            stopReplication();
+        }
+    };
+
 
     @Override
     public void onCreate() {
@@ -89,6 +106,15 @@ public class Application extends android.app.Application {
         } catch (IOException e) {
             e.printStackTrace();
         }
+
+        Foreground.init(this);
+        listenerBinding = Foreground.get().addListener(mListener);
+    }
+
+    @Override
+    public void onTerminate() {
+        super.onTerminate();
+        listenerBinding.unbind();
     }
 
     // Logging
@@ -110,7 +136,8 @@ public class Application extends android.app.Application {
         installPrebuiltDb();
         openDatabase(username, password, newPassword);
         mUsername = username;
-        startReplication(username, password);
+        mPassword = password;
+        startReplication();
         showApp();
         startConflictLiveQuery();
     }
@@ -258,11 +285,15 @@ public class Application extends android.app.Application {
         });
     }
 
+
     // Replication
-    private void startReplication(String username, String password) {
+    private void startReplication() {
         if (!mSyncEnabled) {
             return;
         }
+
+        if (database == null)
+            return;
 
         URL url = null;
         try {
@@ -270,8 +301,6 @@ public class Application extends android.app.Application {
         } catch (MalformedURLException e) {
             e.printStackTrace();
         }
-
-        ReplicationChangeListener changeListener = new ReplicationChangeListener(this);
 
         pusher = database.createPushReplication(url);
         pusher.setContinuous(true); // Runs forever in the background
@@ -282,7 +311,7 @@ public class Application extends android.app.Application {
         puller.addChangeListener(changeListener);
 
         if (mLoginFlowEnabled) {
-            Authenticator authenticator = AuthenticatorFactory.createBasicAuthenticator(username, password);
+            Authenticator authenticator = AuthenticatorFactory.createBasicAuthenticator(mUsername, mPassword);
             pusher.setAuthenticator(authenticator);
             puller.setAuthenticator(authenticator);
         }
@@ -295,9 +324,19 @@ public class Application extends android.app.Application {
         if (!mSyncEnabled) {
             return;
         }
+        if (database == null)
+            return;
 
-        pusher.stop();
-        puller.stop();
+        if (pusher != null) {
+            pusher.removeChangeListener(changeListener);
+            pusher.stop();
+            pusher = null;
+        }
+        if (puller != null) {
+            puller.removeChangeListener(changeListener);
+            puller.stop();
+            puller = null;
+        }
     }
 
 

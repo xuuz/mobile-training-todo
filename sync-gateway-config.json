@@ -15,7 +15,7 @@
         "moderator": {},
         "admin": {}
       },
-      "sync": `
+      "sync": 
 function(doc, oldDoc){
   /* Type validation */
   if (isCreate()) {
